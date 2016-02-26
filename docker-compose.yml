@@ -1,0 +1,81 @@
+version: '2'
+
+# networks:
+#   weave:
+#     driver: weavemesh
+
+services:
+  fluxetcd:
+    image: quay.io/coreos/etcd
+    network_mode: "weave"
+    expose:
+      - "2379"
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+      - "4001:4001"
+      - "7001:7001"
+    command: "-listen-client-urls http://0.0.0.0:2379 -advertise-client-urls=http://composeflux_fluxetcd_1:2379"
+
+  fluxagent:
+    image: weaveworks/flux-agent
+    depends_on:
+      - fluxetcd
+    network_mode: "weave"
+    environment:
+      - ETCD_ADDRESS=http://composeflux_fluxetcd_1:2379
+#      - constraint:service!=fluxagent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: "-host-ip 0.0.0.0"
+
+  fluxprometheus:
+    image: weaveworks/flux-prometheus-etcd
+    depends_on:
+      - fluxetcd
+    hostname: prometheus
+    network_mode: "weave"
+    environment:
+      - ETCD_ADDRESS=http://composeflux_fluxetcd_1:2379
+
+  fluxbalancer:
+    image: weaveworks/flux-balancer
+    depends_on:
+      - fluxetcd
+      - fluxagent
+    network_mode: "host"
+    # networks:
+    #   - weave
+    cap_add: 
+      - NET_ADMIN
+    environment:
+      - ETCD_ADDRESS=http://composeflux_fluxetcd_1:2379
+#      - "constraint:service!=fluxagent"
+    command: 
+      - "-listen-prometheus=0.0.0.0:9000"
+      - "-advertise-prometheus=0.0.0.0:9000"
+
+  fluxweb:
+    image: weaveworks/flux-web
+    depends_on:
+      - fluxetcd
+      - fluxagent
+      - fluxprometheus
+    network_mode: "weave"
+    environment:
+      - ETCD_ADDRESS=http://composeflux_fluxetcd_1:2379
+      - PROMETHEUS_ADDRESS=http://composeflux_fluxprometheus_1:9090/
+
+  weavescope:
+    container_name: weavescope
+    volumes:
+      - "/var/run/:/var/run:rw"
+    command:
+      - "--probe.docker"
+      - "true"
+    image: weaveworks/scope:latest
+    network_mode: "host"
+    pid: "host"
+    ports:
+      - "4040:4040"
+    privileged: true
